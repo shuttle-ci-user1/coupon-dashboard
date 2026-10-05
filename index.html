@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coupon Redemption Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako_inflate.min.js"></script>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--card2:#334155;--text:#f1f5f9;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--border:#475569}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;padding:20px}
+h1{font-size:1.6rem;margin-bottom:4px}
+.subtitle{color:var(--muted);font-size:.85rem;margin-bottom:18px}
+.controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;background:var(--card);padding:18px 20px;border-radius:12px;margin-bottom:20px}
+.control-group{display:flex;flex-direction:column;gap:4px}
+.control-group label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+select,input{background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:.85rem;min-width:180px}
+select:focus,input:focus{outline:2px solid var(--accent)}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:.85rem;cursor:pointer;font-weight:600}
+.btn:hover{opacity:.85}
+.kpi-row{display:flex;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+.kpi-card{background:var(--card);border-radius:12px;padding:16px 20px;min-width:200px;flex:1}
+.kpi-card .label{font-size:.75rem;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+.kpi-card .value{font-size:1.5rem;font-weight:700}
+.kpi-card .delta{font-size:.8rem;margin-top:4px}
+.delta.pos{color:var(--green)}.delta.neg{color:var(--red)}.delta.neutral{color:var(--muted)}
+.section{background:var(--card);border-radius:12px;padding:20px;margin-bottom:20px}
+.section h2{font-size:1.05rem;margin-bottom:14px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{text-align:left;padding:10px 8px;background:var(--card2);position:sticky;top:0;white-space:nowrap;cursor:pointer}
+td{padding:8px;border-bottom:1px solid var(--border);white-space:nowrap}
+tr:hover td{background:var(--card2)}
+.neg-cell{color:var(--red);font-weight:600}
+.pos-cell{color:var(--green);font-weight:600}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600}
+.badge.down{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.up{background:rgba(34,197,94,.15);color:var(--green)}
+.badge.new{background:rgba(59,130,246,.15);color:var(--accent)}
+.badge.gone{background:rgba(148,163,184,.15);color:var(--muted)}
+.filter-row{display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.search-input{background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:.8rem;width:250px}
+.checkbox-group label{display:flex;align-items:center;gap:5px;font-size:.8rem;cursor:pointer}
+.checkbox-group input{min-width:auto}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.summary-item{background:var(--card2);border-radius:8px;padding:12px 14px}
+.summary-item .title{font-size:.75rem;color:var(--muted)}
+.summary-item .nums{display:flex;gap:20px;margin-top:6px;flex-wrap:wrap}
+.summary-item .nums div{font-size:.8rem}
+.loading-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;z-index:9999}
+.spinner{border:3px solid var(--border);border-top:3px solid var(--accent);border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin-bottom:15px}
+@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div>Loading dashboard data...</div>
+</div>
+<h1>Coupon Redemption Dashboard</h1>
+<p class="subtitle">Compare coupon redemption between a Selected Day and a Base Day, filtered by brand</p>
+<div class="controls">
+  <div class="control-group"><label>Selected Day</label><select id="selDay"></select></div>
+  <div class="control-group"><label>Base Day</label><select id="baseDay"></select></div>
+  <div class="control-group"><label>Brand</label><select id="brandFilter"><option value="ALL">All Brands</option></select></div>
+  <div class="control-group"><label>City</label><select id="cityFilter"><option value="ALL">All Cities</option></select></div>
+  <div class="control-group"><label>&nbsp;</label><button class="btn" onclick="render()">Compare</button></div>
+</div>
+<div class="kpi-row" id="kpiRow"></div>
+<div class="section">
+  <h2>Coupon-Level Comparison (Orders)</h2>
+  <div class="filter-row">
+    <input class="search-input" id="tableSearch" placeholder="Search coupon or brand..." oninput="filterTable()">
+    <div class="checkbox-group"><label><input type="checkbox" id="onlyDecrease" onchange="renderTable()"> Show only decreased coupons</label></div>
+    <div class="checkbox-group"><label><input type="checkbox" id="onlyNonEmpty" onchange="renderTable()" checked> Exclude empty coupon codes</label></div>
+  </div>
+  <div class="table-wrap" style="max-height:600px;overflow:auto">
+    <table id="couponTable"><thead><tr id="tableHead"></tr></thead><tbody id="tableBody"></tbody></table>
+  </div>
+</div>
+<div class="section"><h2>Top 20 Coupons - Orders Comparison</h2><canvas id="couponChart"></canvas></div>
+<div class="section"><h2>Brand-Level Summary</h2><div class="summary-grid" id="brandSummary"></div></div>
+<script src="data.js"></script>
+<script>
+let RAW=[],chart=null,tableData=[],sortDir={};
+(function(){
+  const bin=atob(B64);
+  const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  const json=pako.inflate(bytes,{to:'string'});
+  const p=JSON.parse(json);
+  RAW=p.r.map(r=>({date:p.d[r[0]],brand:p.b[r[1]],city:p.c[r[2]],coupon_code:p.k[r[3]],orders:r[4],gmv:r[5],total_discount:r[6],coupon_discount:r[7],rburn:r[8],sburn:r[9]}));
+  document.getElementById('loadingOverlay').style.display='none';
+  init();
+})();
+function init(){
+  const dates=[...new Set(RAW.map(r=>r.date))].sort();
+  const brands=[...new Set(RAW.map(r=>r.brand))].sort();
+  const cities=[...new Set(RAW.map(r=>r.city))].sort();
+  fillSelect('selDay',dates);fillSelect('baseDay',dates);
+  fillSelect('brandFilter',brands,'ALL','All Brands');
+  fillSelect('cityFilter',cities,'ALL','All Cities');
+  if(dates.length>=2){document.getElementById('selDay').value=dates[dates.length-1];document.getElementById('baseDay').value=dates[dates.length-2]}
+  render();
+}
+function fillSelect(id,items,allVal,allLabel){const sel=document.getElementById(id);sel.innerHTML='';if(allVal!==undefined)sel.appendChild(new Option(allLabel||'All',allVal));items.forEach(v=>sel.appendChild(new Option(v,v)))}
+function getFilteredData(d,b,c){return RAW.filter(r=>r.date===d&&(b==='ALL'||r.brand===b)&&(c==='ALL'||r.city===c))}
+function aggregate(data){
+  const byCoupon={};let t={orders:0,gmv:0,total_discount:0,coupon_discount:0,rburn:0,sburn:0,coupons_count:0};
+  data.forEach(r=>{const k=r.coupon_code||'(no coupon)';
+    if(!byCoupon[k])byCoupon[k]={coupon:k,brand:r.brand,orders:0,gmv:0,total_discount:0,coupon_discount:0,rburn:0,sburn:0};
+    byCoupon[k].orders+=r.orders;byCoupon[k].gmv+=r.gmv;byCoupon[k].total_discount+=r.total_discount;
+    byCoupon[k].coupon_discount+=r.coupon_discount;byCoupon[k].rburn+=r.rburn;byCoupon[k].sburn+=r.sburn;byCoupon[k].brand=r.brand;
+    t.orders+=r.orders;t.gmv+=r.gmv;t.total_discount+=r.total_discount;t.coupon_discount+=r.coupon_discount;t.rburn+=r.rburn;t.sburn+=r.sburn;
+    if(r.coupon_code)t.coupons_count++;});
+  return{byCoupon,totals:t};
+}
+function render(){
+  const sd=document.getElementById('selDay').value,bd=document.getElementById('baseDay').value;
+  const br=document.getElementById('brandFilter').value,ct=document.getElementById('cityFilter').value;
+  if(!sd||!bd)return;
+  const s=aggregate(getFilteredData(sd,br,ct)),b=aggregate(getFilteredData(bd,br,ct));
+  renderKPIs(s.totals,b.totals);renderTable(s.byCoupon,b.byCoupon);
+  renderChart(s.byCoupon,b.byCoupon);renderBrandSummary(s.byCoupon,b.byCoupon);
+}
+function renderKPIs(s,b){
+  const items=[{l:'Total Orders',s:s.orders,b:b.orders,f:'int'},{l:'GMV',s:s.gmv,b:b.gmv,f:'money'},{l:'Total Discount',s:s.total_discount,b:b.total_discount,f:'money'},{l:'Coupon Discount',s:s.coupon_discount,b:b.coupon_discount,f:'money'},{l:'RBurn',s:s.rburn,b:b.rburn,f:'money'},{l:'SBurn',s:s.sburn,b:b.sburn,f:'money'},{l:'Unique Coupons',s:s.coupons_count,b:b.coupons_count,f:'int'}];
+  document.getElementById('kpiRow').innerHTML=items.map(it=>{const d=it.s-it.b;const p=it.b>0?(d/it.b*100).toFixed(1):null;const c=d>0?'pos':d<0?'neg':'neutral';const a=d>0?'\u25B2':d<0?'\u25BC':'\u2014';const v=it.f==='money'?fm(it.s):fi(it.s);return '<div class="kpi-card"><div class="label">'+it.l+'</div><div class="value">'+v+'</div><div class="delta '+c+'">'+a+' '+(it.f==='money'?fm(Math.abs(d)):fi(Math.abs(d)))+' '+(p!==null?'('+p+'%)':'(new)')+'</div></div>'}).join('');
+}
+function renderTable(sc,bc){
+  const keys=[...new Set([...Object.keys(sc),...Object.keys(bc)])];
+  tableData=keys.map(k=>{
+    const s=sc[k]||{orders:0,gmv:0,coupon_discount:0,brand:''};const b=bc[k]||{orders:0,gmv:0,coupon_discount:0,brand:''};
+    const d=s.orders-b.orders;const p=b.orders>0?(d/b.orders*100):null;const dd=s.coupon_discount-b.coupon_discount;
+    let st='';if(b.orders>0&&s.orders===0)st='gone';else if(b.orders===0&&s.orders>0)st='new';else if(d<0)st='down';else if(d>0)st='up';
+    return{coupon:k,brand:s.brand||b.brand,selOrders:s.orders,baseOrders:b.orders,deltaOrders:d,pct:p,selDisc:s.coupon_discount,baseDisc:b.coupon_discount,deltaDisc:dd,selGmv:s.gmv,baseGmv:b.gmv,status:st};
+  });
+  tableData.sort((a,b)=>a.deltaOrders-b.deltaOrders);renderTableHTML();
+}
+function renderTableHTML(){
+  const od=document.getElementById('onlyDecrease').checked,one=document.getElementById('onlyNonEmpty').checked;
+  const st=document.getElementById('tableSearch').value.toLowerCase();
+  let f=tableData.filter(r=>{if(od&&r.deltaOrders>=0)return false;if(one&&r.coupon==='(no coupon)')return false;if(st&&!r.coupon.toLowerCase().includes(st)&&!r.brand.toLowerCase().includes(st))return false;return true});
+  const h=document.getElementById('tableHead');
+  h.innerHTML='<th data-sort="coupon">Coupon</th><th data-sort="brand">Brand</th><th data-sort="baseOrders">Base Orders</th><th data-sort="selOrders">Sel Orders</th><th data-sort="deltaOrders">Delta</th><th data-sort="pct">% Chg</th><th data-sort="baseDisc">Base Disc</th><th data-sort="selDisc">Sel Disc</th><th data-sort="deltaDisc">D Disc</th><th data-sort="baseGmv">Base GMV</th><th data-sort="selGmv">Sel GMV</th><th data-sort="status">Status</th>';
+  h.querySelectorAll('th').forEach(th=>th.onclick=()=>sortTable(th.dataset.sort));
+  document.getElementById('tableBody').innerHTML=f.map(r=>{
+    const dc=r.deltaOrders<0?'neg-cell':r.deltaOrders>0?'pos-cell':'';
+    const ps=r.pct!==null?(r.pct>0?'+':'')+r.pct.toFixed(1)+'%':r.baseOrders===0&&r.selOrders>0?'NEW':'\u2014';
+    let bg='';if(r.status==='down')bg='<span class="badge down">Decreased</span>';else if(r.status==='up')bg='<span class="badge up">Increased</span>';else if(r.status==='new')bg='<span class="badge new">New</span>';else if(r.status==='gone')bg='<span class="badge gone">Gone</span>';
+    return '<tr><td>'+r.coupon+'</td><td>'+r.brand+'</td><td>'+fi(r.baseOrders)+'</td><td>'+fi(r.selOrders)+'</td><td class="'+dc+'">'+(r.deltaOrders>0?'+':'')+fi(r.deltaOrders)+'</td><td class="'+dc+'">'+ps+'</td><td>'+fm(r.baseDisc)+'</td><td>'+fm(r.selDisc)+'</td><td>'+(r.deltaDisc>0?'+':'')+fm(r.deltaDisc)+'</td><td>'+fm(r.baseGmv)+'</td><td>'+fm(r.selGmv)+'</td><td>'+bg+'</td></tr>';
+  }).join('');
+}
+function sortTable(col){sortDir[col]=sortDir[col]==='asc'?'desc':'asc';tableData.sort((a,b)=>{let va=a[col],vb=b[col];if(typeof va==='string')return sortDir[col]==='asc'?va.localeCompare(vb):vb.localeCompare(va);return sortDir[col]==='asc'?va-vb:vb-va});renderTableHTML()}
+function filterTable(){renderTableHTML()}
+function renderChart(sc,bc){
+  const keys=[...new Set([...Object.keys(sc),...Object.keys(bc)])];
+  const combined=keys.map(k=>({coupon:k,sel:sc[k]?.orders||0,base:bc[k]?.orders||0,total:(sc[k]?.orders||0)+(bc[k]?.orders||0)})).filter(r=>r.coupon!=='(no coupon)');
+  combined.sort((a,b)=>b.total-a.total);const top=combined.slice(0,20).sort((a,b)=>a.sel-b.sel);
+  if(chart)chart.destroy();
+  chart=new Chart(document.getElementById('couponChart'),{type:'bar',data:{labels:top.map(r=>r.coupon),datasets:[{label:'Base Day Orders',data:top.map(r=>r.base),backgroundColor:'#64748b',borderRadius:4},{label:'Selected Day Orders',data:top.map(r=>r.sel),backgroundColor:'#3b82f6',borderRadius:4}]},options:{responsive:true,indexAxis:'y',plugins:{legend:{labels:{color:'#f1f5f9'}}},scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'#334155'}},y:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#334155'}}}}});
+}
+function renderBrandSummary(sc,bc){
+  const sb={},bb={};
+  Object.values(sc).forEach(r=>{if(!sb[r.brand])sb[r.brand]={o:0,d:0};sb[r.brand].o+=r.orders;sb[r.brand].d+=r.coupon_discount});
+  Object.values(bc).forEach(r=>{if(!bb[r.brand])bb[r.brand]={o:0,d:0};bb[r.brand].o+=r.orders;bb[r.brand].d+=r.coupon_discount});
+  const all=[...new Set([...Object.keys(sb),...Object.keys(bb)])];
+  const rows=all.map(b=>{const s=sb[b]||{o:0,d:0};const bs=bb[b]||{o:0,d:0};return{brand:b,sel:s.o,base:bs.o,delta:s.o-bs.o,selDisc:s.d}});
+  rows.sort((a,b)=>a.delta-b.delta);const top=rows.slice(0,20);
+  document.getElementById('brandSummary').innerHTML=top.map(r=>'<div class="summary-item"><div class="title">'+r.brand+'</div><div class="nums"><div>Orders: <b>'+fi(r.base)+'</b> > <b>'+fi(r.sel)+'</b> <span class="'+(r.delta<0?'neg-cell':'pos-cell')+'">('+(r.delta>0?'+':'')+fi(r.delta)+')</span></div><div>Disc: <b>'+fm(r.selDisc)+'</b></div></div></div>').join('');
+}
+function fm(v){if(Math.abs(v)>=10000000)return(v/10000000).toFixed(2)+'Cr';if(Math.abs(v)>=100000)return(v/100000).toFixed(2)+'L';if(Math.abs(v)>=1000)return(v/1000).toFixed(1)+'K';return v.toFixed(0)}
+function fi(v){return Math.round(v).toLocaleString('en-IN')}
+</script>
+</body>
+</html>
